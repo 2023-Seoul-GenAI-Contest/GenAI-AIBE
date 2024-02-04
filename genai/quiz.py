@@ -1,13 +1,12 @@
-from langchain.chat_models import ChatOpenAI
-from langchain import LLMChain
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-)
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from typing import List, Dict
+from langchain_core.pydantic_v1 import BaseModel, Field
 
-chat_llm = ChatOpenAI(model_name="gpt-3.5-turbo")
+chat_llm = ChatOpenAI(model_name="gpt-4-0125-preview")
 
-system_template="""
+prompt_template="""
 강의 내용 : 
 {lecture}
 
@@ -24,36 +23,25 @@ questionNum에는 퀴즈의 번호를 매겨줘. 01, 02, 03 이렇게.
 [{{"question":"퀴즈 내용", "lectureCode":"001", "example":["선택지1", "선택지2", "선택지3", "선택지4"], "answer":"선택지2","explain":"정답이유", "questionNum":"01"}}, {{"question":"퀴즈 내용", "lectureCode":"001", "example":["선택지1", "선택지2", "선택지3", "선택지4"], "answer":"선택지1","explain":"정답이유", "questionNum":"02"}}, {{"question":"퀴즈 내용", "lectureCode":"001", "example":["선택지1", "선택지2", "선택지3", "선택지4"], "answer":"선택지4","explain":"정답이유", "questionNum":"03"}}]
 """
 
-system_message_prompt = SystemMessagePromptTemplate.from_template(system_template)
-
-chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
-
-llm_chain = LLMChain(
-    llm=chat_llm,
-    prompt=chat_prompt,
+PROMPT = PromptTemplate(
+    template=prompt_template, input_variables=["lecture"]
 )
 
-def validate_data(data):
-    stack = []
-    for item in data:
-        if item == "[":
-            stack.append("[")
-        elif item == "{":
-            stack.append("{")
-        elif item == "]":
-            if len(stack) == 0 or stack[-1] != "[":
-                return False
-            stack.pop()
-        elif item == "}":
-            if len(stack) == 0 or stack[-1] != "{":
-                return False
-            stack.pop()
+class Quiz(BaseModel):
+    answer: str = Field(description="정답")
+    example: List[str] = Field(description="선지")
+    explain: str = Field(description="정답의 이유")
+    lectureCode: str = Field(description="해당 내용이 나온 강의코드")
+    question: str = Field(description="문제")
+    questionNum: str = Field(description="정답번호")
 
-    return len(stack) == 0
+class Output(BaseModel):
+    Responses: List[Quiz]
 
-def generate_quiz(request):
-    res = llm_chain(str(request))['text']
-    if validate_data(res) == True:
-        return res
-    else:
-        generate_quiz(request)
+parser = JsonOutputParser(pydantic_object=Output)
+
+chain = PROMPT | chat_llm | parser
+
+async def generate_quiz(request):
+    res = await chain.ainvoke({"lecture": request})
+    return res

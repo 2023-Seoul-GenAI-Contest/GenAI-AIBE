@@ -1,13 +1,12 @@
-from langchain.chat_models import ChatOpenAI
-from langchain import LLMChain
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-)
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from typing import List, Dict
+from langchain_core.pydantic_v1 import BaseModel, Field
 
-chat_llm = ChatOpenAI(model_name="gpt-3.5-turbo")
+chat_llm = ChatOpenAI(model_name="gpt-4-0125-preview")
 
-system_template="""
+prompt_template="""
 강의 내용 : 
 {lecture}
 
@@ -22,36 +21,22 @@ describe에는 해당 키워드에 대한 설명을 작성해줘.
 {{"lectureCode":"001", "keyword":[{{"time":"00:05", "name":"키워드1", "describe":"키워드1에대한 설명"}}, {{"time":"01:07", "name":"키워드2", "describe":"키워드2에대한 설명"}}, {{"time":"03:08", "name":"키워드3", "describe":"키워드3에대한 설명"}}]}}  
 """
 
-system_message_prompt = SystemMessagePromptTemplate.from_template(system_template)
-
-chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
-
-llm_chain = LLMChain(
-    llm=chat_llm,
-    prompt=chat_prompt,
+PROMPT = PromptTemplate(
+    template=prompt_template, input_variables=["lecture"]
 )
+class Keyword(BaseModel):
+    time: str = Field(description="해당 내용이 언급된 시간")
+    name: str = Field(description="키워드")
+    describe: str = Field(description= "키워드에 대한 설명")
 
-def validate_data(data):
-    stack = []
-    for item in data:
-        if item == "[":
-            stack.append("[")
-        elif item == "{":
-            stack.append("{")
-        elif item == "]":
-            if len(stack) == 0 or stack[-1] != "[":
-                return False
-            stack.pop()
-        elif item == "}":
-            if len(stack) == 0 or stack[-1] != "{":
-                return False
-            stack.pop()
+class Output(BaseModel):
+    lectureCode: str = Field(description="강의코드")
+    keyword: List[Keyword]
 
-    return len(stack) == 0
+parser = JsonOutputParser(pydantic_object=Output)
 
-def generate_keyword(request):
-    res = llm_chain(str(request))['text']
-    if validate_data(res) == True:
-        return res
-    else:
-        generate_keyword(request)
+chain = PROMPT | chat_llm | parser
+
+async def generate_keyword(request):
+    res = await chain.ainvoke({"lecture": request})
+    return res
